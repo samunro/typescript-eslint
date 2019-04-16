@@ -125,12 +125,12 @@ export default util.createRule<Options, MessageIds>({
      */
     function TSPropertySignatureToProperty(
       node:
-        | TSESTree.TSPropertySignature
-        | TSESTree.TSEnumMember
-        | TSESTree.TypeElement,
+      | TSESTree.TSPropertySignature
+      | TSESTree.TSEnumMember
+      | TSESTree.TypeElement,
       type:
-        | AST_NODE_TYPES.ClassProperty
-        | AST_NODE_TYPES.Property = AST_NODE_TYPES.Property,
+      | AST_NODE_TYPES.ClassProperty
+      | AST_NODE_TYPES.Property = AST_NODE_TYPES.Property,
     ): TSESTree.Node | null {
       const base = {
         // indent doesn't actually use these
@@ -340,6 +340,56 @@ export default util.createRule<Options, MessageIds>({
           range: node.range,
           loc: node.loc,
         });
+      },
+
+      'TSIntersectionType, TSUnionType'(
+        node: TSESTree.TSIntersectionType | TSESTree.TSUnionType,
+      ) {
+        // note that binary expressions are built "backwards"
+        // meaning the last expression in the chain will be the "right" of the root node
+        function toBinaryExpression(
+          node: TSESTree.TSIntersectionType | TSESTree.TSUnionType,
+          currentIndex: number,
+        ): TSESTree.BinaryExpression {
+          const nextIndex = currentIndex - 1;
+          const nextType = node.types[nextIndex];
+
+          const right = node.types[currentIndex];
+          let left;
+          if (
+            nextType.type === AST_NODE_TYPES.TSIntersectionType ||
+            nextType.type === AST_NODE_TYPES.TSUnionType
+          ) {
+            // recursively convert the nested intersection/union
+            left = toBinaryExpression(nextType, nextType.types.length - 1);
+          } else if (nextIndex === 0) {
+            // end of the line, no more nodes to convery
+            left = node.types[nextIndex];
+          } else {
+            // continue converting the chain
+            left = toBinaryExpression(node, nextIndex);
+          }
+
+          return {
+            type: AST_NODE_TYPES.BinaryExpression,
+            left: left as any,
+            right: right as any,
+            operator:
+              node.type === AST_NODE_TYPES.TSIntersectionType ? '&' : '|',
+
+            // location data
+            parent: node.parent,
+            range: [left.range[0], right.range[1]],
+            loc: {
+              start: left.loc.start,
+              end: right.loc.end,
+            },
+          };
+        }
+
+        const root = toBinaryExpression(node, node.types.length - 1);
+        // transform it to a BinaryExpression
+        return rules['BinaryExpression, LogicalExpression'](root);
       },
 
       TSMappedType(node: TSESTree.TSMappedType) {
